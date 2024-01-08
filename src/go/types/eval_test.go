@@ -139,7 +139,7 @@ func TestEvalPos(t *testing.T) {
 				/* c => , struct{c int} */
 				_ = c
 			}
-			_ = func(a, b, c int /* c => , string */) /* c => , int */ {
+			_ = func(a, b, c int) /* c => , string */ {
 				/* c => , int */
 			}
 			_ = c

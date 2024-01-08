@@ -69,61 +69,22 @@ func goamd64() int {
 	return int(defaultGOAMD64[len("v")] - '0')
 }
 
-type goarmFeatures struct {
-	Version   int
-	SoftFloat bool
-}
-
-func (g goarmFeatures) String() string {
-	armStr := strconv.Itoa(g.Version)
-	if g.SoftFloat {
-		armStr += ",softfloat"
-	} else {
-		armStr += ",hardfloat"
-	}
-	return armStr
-}
-
-func goarm() (g goarmFeatures) {
-	const (
-		softFloatOpt = ",softfloat"
-		hardFloatOpt = ",hardfloat"
-	)
+func goarm() int {
 	def := defaultGOARM
 	if GOOS == "android" && GOARCH == "arm" {
 		// Android arm devices always support GOARM=7.
 		def = "7"
 	}
-	v := envOr("GOARM", def)
-
-	floatSpecified := false
-	if strings.HasSuffix(v, softFloatOpt) {
-		g.SoftFloat = true
-		floatSpecified = true
-		v = v[:len(v)-len(softFloatOpt)]
-	}
-	if strings.HasSuffix(v, hardFloatOpt) {
-		floatSpecified = true
-		v = v[:len(v)-len(hardFloatOpt)]
-	}
-
-	switch v {
+	switch v := envOr("GOARM", def); v {
 	case "5":
-		g.Version = 5
+		return 5
 	case "6":
-		g.Version = 6
+		return 6
 	case "7":
-		g.Version = 7
-	default:
-		Error = fmt.Errorf("invalid GOARM: must start with 5, 6, or 7, and may optionally end in either %q or %q", hardFloatOpt, softFloatOpt)
-		g.Version = int(def[0] - '0')
+		return 7
 	}
-
-	// 5 defaults to softfloat. 6 and 7 default to hardfloat.
-	if !floatSpecified && g.Version == 5 {
-		g.SoftFloat = true
-	}
-	return
+	Error = fmt.Errorf("invalid GOARM: must be 5, 6, 7")
+	return int(def[0] - '0')
 }
 
 func gomips() string {
@@ -221,7 +182,7 @@ func GOGOARCH() (name, value string) {
 	case "amd64":
 		return "GOAMD64", fmt.Sprintf("v%d", GOAMD64)
 	case "arm":
-		return "GOARM", GOARM.String()
+		return "GOARM", strconv.Itoa(GOARM)
 	case "mips", "mipsle":
 		return "GOMIPS", GOMIPS
 	case "mips64", "mips64le":
@@ -246,7 +207,7 @@ func gogoarchTags() []string {
 		return list
 	case "arm":
 		var list []string
-		for i := 5; i <= GOARM.Version; i++ {
+		for i := 5; i <= GOARM; i++ {
 			list = append(list, fmt.Sprintf("%s.%d", GOARCH, i))
 		}
 		return list

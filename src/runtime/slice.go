@@ -64,11 +64,7 @@ func makeslicecopy(et *_type, tolen int, fromlen int, from unsafe.Pointer) unsaf
 		if copymem > 0 && writeBarrier.enabled {
 			// Only shade the pointers in old.array since we know the destination slice to
 			// only contains nil pointers because it has been cleared during alloc.
-			//
-			// It's safe to pass a type to this function as an optimization because
-			// from and to only ever refer to memory representing whole values of
-			// type et. See the comment on bulkBarrierPreWrite.
-			bulkBarrierPreWriteSrcOnly(uintptr(to), uintptr(from), copymem, et)
+			bulkBarrierPreWriteSrcOnly(uintptr(to), uintptr(from), copymem)
 		}
 	}
 
@@ -119,6 +115,12 @@ func makeslice64(et *_type, len64, cap64 int64) unsafe.Pointer {
 	}
 
 	return makeslice(et, len, cap)
+}
+
+// This is a wrapper over runtime/internal/math.MulUintptr,
+// so the compiler can recognize and treat it as an intrinsic.
+func mulUintptr(a, b uintptr) (uintptr, bool) {
+	return math.MulUintptr(a, b)
 }
 
 // growslice allocates new backing store for a slice.
@@ -175,7 +177,30 @@ func growslice(oldPtr unsafe.Pointer, newLen, oldCap, num int, et *_type) slice 
 		return slice{unsafe.Pointer(&zerobase), newLen, newLen}
 	}
 
-	newcap := nextslicecap(newLen, oldCap)
+	newcap := oldCap
+	doublecap := newcap + newcap
+	if newLen > doublecap {
+		newcap = newLen
+	} else {
+		const threshold = 256
+		if oldCap < threshold {
+			newcap = doublecap
+		} else {
+			// Check 0 < newcap to detect overflow
+			// and prevent an infinite loop.
+			for 0 < newcap && newcap < newLen {
+				// Transition from growing 2x for small slices
+				// to growing 1.25x for large slices. This formula
+				// gives a smooth-ish transition between the two.
+				newcap += (newcap + 3*threshold) / 4
+			}
+			// Set newcap to the requested cap when
+			// the newcap calculation overflowed.
+			if newcap <= 0 {
+				newcap = newLen
+			}
+		}
+	}
 
 	var overflow bool
 	var lenmem, newlenmem, capmem uintptr
@@ -183,18 +208,17 @@ func growslice(oldPtr unsafe.Pointer, newLen, oldCap, num int, et *_type) slice 
 	// For 1 we don't need any division/multiplication.
 	// For goarch.PtrSize, compiler will optimize division/multiplication into a shift by a constant.
 	// For powers of 2, use a variable shift.
-	noscan := et.PtrBytes == 0
 	switch {
 	case et.Size_ == 1:
 		lenmem = uintptr(oldLen)
 		newlenmem = uintptr(newLen)
-		capmem = roundupsize(uintptr(newcap), noscan)
+		capmem = roundupsize(uintptr(newcap))
 		overflow = uintptr(newcap) > maxAlloc
 		newcap = int(capmem)
 	case et.Size_ == goarch.PtrSize:
 		lenmem = uintptr(oldLen) * goarch.PtrSize
 		newlenmem = uintptr(newLen) * goarch.PtrSize
-		capmem = roundupsize(uintptr(newcap)*goarch.PtrSize, noscan)
+		capmem = roundupsize(uintptr(newcap) * goarch.PtrSize)
 		overflow = uintptr(newcap) > maxAlloc/goarch.PtrSize
 		newcap = int(capmem / goarch.PtrSize)
 	case isPowerOfTwo(et.Size_):
@@ -207,7 +231,7 @@ func growslice(oldPtr unsafe.Pointer, newLen, oldCap, num int, et *_type) slice 
 		}
 		lenmem = uintptr(oldLen) << shift
 		newlenmem = uintptr(newLen) << shift
-		capmem = roundupsize(uintptr(newcap)<<shift, noscan)
+		capmem = roundupsize(uintptr(newcap) << shift)
 		overflow = uintptr(newcap) > (maxAlloc >> shift)
 		newcap = int(capmem >> shift)
 		capmem = uintptr(newcap) << shift
@@ -215,7 +239,7 @@ func growslice(oldPtr unsafe.Pointer, newLen, oldCap, num int, et *_type) slice 
 		lenmem = uintptr(oldLen) * et.Size_
 		newlenmem = uintptr(newLen) * et.Size_
 		capmem, overflow = math.MulUintptr(et.Size_, uintptr(newcap))
-		capmem = roundupsize(capmem, noscan)
+		capmem = roundupsize(capmem)
 		newcap = int(capmem / et.Size_)
 		capmem = uintptr(newcap) * et.Size_
 	}
@@ -251,51 +275,12 @@ func growslice(oldPtr unsafe.Pointer, newLen, oldCap, num int, et *_type) slice 
 		if lenmem > 0 && writeBarrier.enabled {
 			// Only shade the pointers in oldPtr since we know the destination slice p
 			// only contains nil pointers because it has been cleared during alloc.
-			//
-			// It's safe to pass a type to this function as an optimization because
-			// from and to only ever refer to memory representing whole values of
-			// type et. See the comment on bulkBarrierPreWrite.
-			bulkBarrierPreWriteSrcOnly(uintptr(p), uintptr(oldPtr), lenmem-et.Size_+et.PtrBytes, et)
+			bulkBarrierPreWriteSrcOnly(uintptr(p), uintptr(oldPtr), lenmem-et.Size_+et.PtrBytes)
 		}
 	}
 	memmove(p, oldPtr, lenmem)
 
 	return slice{p, newLen, newcap}
-}
-
-// nextslicecap computes the next appropriate slice length.
-func nextslicecap(newLen, oldCap int) int {
-	newcap := oldCap
-	doublecap := newcap + newcap
-	if newLen > doublecap {
-		return newLen
-	}
-
-	const threshold = 256
-	if oldCap < threshold {
-		return doublecap
-	}
-	for {
-		// Transition from growing 2x for small slices
-		// to growing 1.25x for large slices. This formula
-		// gives a smooth-ish transition between the two.
-		newcap += (newcap + 3*threshold) >> 2
-
-		// We need to check `newcap >= newLen` and whether `newcap` overflowed.
-		// newLen is guaranteed to be larger than zero, hence
-		// when newcap overflows then `uint(newcap) > uint(newLen)`.
-		// This allows to check for both with the same comparison.
-		if uint(newcap) >= uint(newLen) {
-			break
-		}
-	}
-
-	// Set newcap to the requested cap when
-	// the newcap calculation overflowed.
-	if newcap <= 0 {
-		return newLen
-	}
-	return newcap
 }
 
 //go:linkname reflect_growslice reflect.growslice

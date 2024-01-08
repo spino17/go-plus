@@ -55,9 +55,7 @@ stdout '"Version": "latest"'
 stdout '"Error":.*no matching versions'
 ! stdout '"TagPrefix"'
 stdout '"TagSum": "t1:47DEQpj8HBSa[+]/TImW[+]5JCeuQeRkm5NMpJWZG3hSuFU="'
-stdout '"Ref": "HEAD"'
-stdout '"Hash": "fc3a09f3dc5cfe0d7a743ea18f1f5226e68b3777"'
-! stdout 'RepoSum'
+! stdout '"(Ref|Hash|RepoSum)":'
 
 # go mod download vcstest/hello/sub/v9 should also fail, print origin info with TagPrefix
 ! go mod download -x -json vcs-test.golang.org/git/hello.git/sub/v9@latest
@@ -66,9 +64,7 @@ stdout '"Version": "latest"'
 stdout '"Error":.*no matching versions'
 stdout '"TagPrefix": "sub/"'
 stdout '"TagSum": "t1:47DEQpj8HBSa[+]/TImW[+]5JCeuQeRkm5NMpJWZG3hSuFU="'
-stdout '"Ref": "HEAD"'
-stdout '"Hash": "fc3a09f3dc5cfe0d7a743ea18f1f5226e68b3777"'
-! stdout 'RepoSum'
+! stdout '"(Ref|Hash|RepoSum)":'
 
 # go mod download vcstest/hello@nonexist should fail, still print origin info
 ! go mod download -x -json vcs-test.golang.org/git/hello.git@nonexist
@@ -204,8 +200,7 @@ stdout '"Reuse": true'
 stdout '"Error":.*no matching versions'
 ! stdout '"TagPrefix"'
 stdout '"TagSum": "t1:47DEQpj8HBSa[+]/TImW[+]5JCeuQeRkm5NMpJWZG3hSuFU="'
-stdout '"Ref": "HEAD"'
-stdout '"Hash": "fc3a09f3dc5cfe0d7a743ea18f1f5226e68b3777"'
+! stdout '"(Ref|Hash)":'
 ! stdout '"(Dir|Info|GoMod|Zip)"'
 
 # reuse go mod download vcstest/hello/sub/v9 error result
@@ -215,8 +210,7 @@ stdout '"Reuse": true'
 stdout '"Error":.*no matching versions'
 stdout '"TagPrefix": "sub/"'
 stdout '"TagSum": "t1:47DEQpj8HBSa[+]/TImW[+]5JCeuQeRkm5NMpJWZG3hSuFU="'
-stdout '"Ref": "HEAD"'
-stdout '"Hash": "fc3a09f3dc5cfe0d7a743ea18f1f5226e68b3777"'
+! stdout '"(Ref|Hash)":'
 ! stdout '"(Dir|Info|GoMod|Zip)"'
 
 # reuse go mod download vcstest/hello@nonexist

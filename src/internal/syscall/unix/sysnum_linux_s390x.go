@@ -5,7 +5,6 @@
 package unix
 
 const (
-	getrandomTrap       uintptr = 349
-	copyFileRangeTrap   uintptr = 375
-	pidfdSendSignalTrap uintptr = 424
+	getrandomTrap     uintptr = 349
+	copyFileRangeTrap uintptr = 375
 )

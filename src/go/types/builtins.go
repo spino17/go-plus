@@ -205,7 +205,7 @@ func (check *Checker) builtin(x *operand, call *ast.CallExpr, id builtinId) (_ b
 
 		if mode == invalid {
 			// avoid error if underlying type is invalid
-			if isValid(under(x.typ)) {
+			if under(x.typ) != Typ[Invalid] {
 				code := InvalidCap
 				if id == _Len {
 					code = InvalidLen
@@ -489,7 +489,7 @@ func (check *Checker) builtin(x *operand, call *ast.CallExpr, id builtinId) (_ b
 		// (no argument evaluated yet)
 		arg0 := argList[0]
 		T := check.varType(arg0)
-		if !isValid(T) {
+		if T == Typ[Invalid] {
 			return
 		}
 
@@ -599,7 +599,7 @@ func (check *Checker) builtin(x *operand, call *ast.CallExpr, id builtinId) (_ b
 		// new(T)
 		// (no argument evaluated yet)
 		T := check.varType(argList[0])
-		if !isValid(T) {
+		if T == Typ[Invalid] {
 			return
 		}
 
@@ -798,7 +798,7 @@ func (check *Checker) builtin(x *operand, call *ast.CallExpr, id builtinId) (_ b
 		// unsafe.Slice(ptr *T, len IntegerType) []T
 		check.verifyVersionf(call.Fun, go1_17, "unsafe.Slice")
 
-		ptr, _ := coreType(x.typ).(*Pointer)
+		ptr, _ := under(x.typ).(*Pointer) // TODO(gri) should this be coreType rather than under?
 		if ptr == nil {
 			check.errorf(x, InvalidUnsafeSlice, invalidArg+"%s is not a pointer", x)
 			return
@@ -819,7 +819,7 @@ func (check *Checker) builtin(x *operand, call *ast.CallExpr, id builtinId) (_ b
 		// unsafe.SliceData(slice []T) *T
 		check.verifyVersionf(call.Fun, go1_20, "unsafe.SliceData")
 
-		slice, _ := coreType(x.typ).(*Slice)
+		slice, _ := under(x.typ).(*Slice) // TODO(gri) should this be coreType rather than under?
 		if slice == nil {
 			check.errorf(x, InvalidUnsafeSliceData, invalidArg+"%s is not a slice", x)
 			return
@@ -922,7 +922,7 @@ func hasVarSize(t Type, seen map[*Named]bool) (varSized bool) {
 	// Cycles are only possible through *Named types.
 	// The seen map is used to detect cycles and track
 	// the results of previously seen types.
-	if named := asNamed(t); named != nil {
+	if named, _ := t.(*Named); named != nil {
 		if v, ok := seen[named]; ok {
 			return v
 		}
@@ -953,7 +953,7 @@ func hasVarSize(t Type, seen map[*Named]bool) (varSized bool) {
 }
 
 // applyTypeFunc applies f to x. If x is a type parameter,
-// the result is a type parameter constrained by a new
+// the result is a type parameter constrained by an new
 // interface bound. The type bounds for that interface
 // are computed by applying f to each of the type bounds
 // of x. If any of these applications of f return nil,
@@ -1034,4 +1034,13 @@ func arrayPtrDeref(typ Type) Type {
 	return typ
 }
 
-func unparen(e ast.Expr) ast.Expr { return ast.Unparen(e) }
+// unparen returns e with any enclosing parentheses stripped.
+func unparen(e ast.Expr) ast.Expr {
+	for {
+		p, ok := e.(*ast.ParenExpr)
+		if !ok {
+			return e
+		}
+		e = p.X
+	}
+}

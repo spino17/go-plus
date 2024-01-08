@@ -9,7 +9,6 @@ import (
 	"internal/fmtsort"
 	"math"
 	"reflect"
-	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -39,7 +38,7 @@ var compareTests = [][]reflect.Value{
 	ct(reflect.TypeOf(chans[0]), chans[0], chans[1], chans[2]),
 	ct(reflect.TypeOf(toy{}), toy{0, 1}, toy{0, 2}, toy{1, -1}, toy{1, 1}),
 	ct(reflect.TypeOf([2]int{}), [2]int{1, 1}, [2]int{1, 2}, [2]int{2, 0}),
-	ct(reflect.TypeOf(any(0)), iFace, 1, 2, 3),
+	ct(reflect.TypeOf(any(any(0))), iFace, 1, 2, 3),
 }
 
 var iFace any
@@ -191,15 +190,12 @@ func sprintKey(key reflect.Value) string {
 var (
 	ints  [3]int
 	chans = makeChans()
-	pin   runtime.Pinner
 )
 
 func makeChans() []chan int {
 	cs := []chan int{make(chan int), make(chan int), make(chan int)}
 	// Order channels by address. See issue #49431.
-	for i := range cs {
-		pin.Pin(reflect.ValueOf(cs[i]).UnsafePointer())
-	}
+	// TODO: pin these pointers once pinning is available (#46787).
 	sort.Slice(cs, func(i, j int) bool {
 		return uintptr(reflect.ValueOf(cs[i]).UnsafePointer()) < uintptr(reflect.ValueOf(cs[j]).UnsafePointer())
 	})

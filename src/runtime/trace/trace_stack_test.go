@@ -7,7 +7,6 @@ package trace_test
 import (
 	"bytes"
 	"fmt"
-	"internal/goexperiment"
 	"internal/testenv"
 	"internal/trace"
 	"net"
@@ -153,11 +152,11 @@ func TestTraceSymbolize(t *testing.T) {
 			{"runtime/trace_test.TestTraceSymbolize.func1", 0},
 		}},
 		{trace.EvGoSched, []frame{
-			{"runtime/trace_test.TestTraceSymbolize", 112},
+			{"runtime/trace_test.TestTraceSymbolize", 111},
 			{"testing.tRunner", 0},
 		}},
 		{trace.EvGoCreate, []frame{
-			{"runtime/trace_test.TestTraceSymbolize", 41},
+			{"runtime/trace_test.TestTraceSymbolize", 40},
 			{"testing.tRunner", 0},
 		}},
 		{trace.EvGoStop, []frame{
@@ -178,7 +177,7 @@ func TestTraceSymbolize(t *testing.T) {
 		}},
 		{trace.EvGoUnblock, []frame{
 			{"runtime.chansend1", 0},
-			{"runtime/trace_test.TestTraceSymbolize", 114},
+			{"runtime/trace_test.TestTraceSymbolize", 113},
 			{"testing.tRunner", 0},
 		}},
 		{trace.EvGoBlockSend, []frame{
@@ -187,7 +186,7 @@ func TestTraceSymbolize(t *testing.T) {
 		}},
 		{trace.EvGoUnblock, []frame{
 			{"runtime.chanrecv1", 0},
-			{"runtime/trace_test.TestTraceSymbolize", 115},
+			{"runtime/trace_test.TestTraceSymbolize", 114},
 			{"testing.tRunner", 0},
 		}},
 		{trace.EvGoBlockSelect, []frame{
@@ -196,7 +195,7 @@ func TestTraceSymbolize(t *testing.T) {
 		}},
 		{trace.EvGoUnblock, []frame{
 			{"runtime.selectgo", 0},
-			{"runtime/trace_test.TestTraceSymbolize", 116},
+			{"runtime/trace_test.TestTraceSymbolize", 115},
 			{"testing.tRunner", 0},
 		}},
 		{trace.EvGoBlockSync, []frame{
@@ -215,7 +214,7 @@ func TestTraceSymbolize(t *testing.T) {
 		{trace.EvGoUnblock, []frame{
 			{"sync.(*WaitGroup).Add", 0},
 			{"sync.(*WaitGroup).Done", 0},
-			{"runtime/trace_test.TestTraceSymbolize", 121},
+			{"runtime/trace_test.TestTraceSymbolize", 120},
 			{"testing.tRunner", 0},
 		}},
 		{trace.EvGoBlockCond, []frame{
@@ -290,10 +289,6 @@ func TestTraceSymbolize(t *testing.T) {
 
 func skipTraceSymbolizeTestIfNecessary(t *testing.T) {
 	testenv.MustHaveGoBuild(t)
-	if goexperiment.ExecTracer2 {
-		// An equivalent test exists in internal/trace/v2.
-		t.Skip("skipping because this test is incompatible with the new tracer")
-	}
 	if IsEnabled() {
 		t.Skip("skipping because -test.trace is set")
 	}

@@ -284,10 +284,9 @@ func panic(v any)
 // by restoring normal execution and retrieves the error value passed to the
 // call of panic. If recover is called outside the deferred function it will
 // not stop a panicking sequence. In this case, or when the goroutine is not
-// panicking, recover returns nil.
-//
-// Prior to Go 1.21, recover would also return nil if panic is called with
-// a nil argument. See [panic] for details.
+// panicking, or if the argument supplied to panic was nil, recover returns
+// nil. Thus the return value from recover reports whether the goroutine is
+// panicking.
 func recover() any
 
 // The print built-in function formats its arguments in an

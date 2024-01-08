@@ -6,20 +6,17 @@ package os
 
 import (
 	"errors"
-	"internal/bytealg"
 	"internal/itoa"
-	_ "unsafe" // for go:linkname
 )
 
-// random number source provided by runtime.
+// fastrand provided by runtime.
 // We generate random temporary file names so that there's a good
 // chance the file doesn't exist yet - keeps the number of tries in
 // TempFile to a minimum.
-//go:linkname runtime_rand runtime.rand
-func runtime_rand() uint64
+func fastrand() uint32
 
 func nextRandom() string {
-	return itoa.Uitoa(uint(uint32(runtime_rand())))
+	return itoa.Uitoa(uint(fastrand()))
 }
 
 // CreateTemp creates a new temporary file in the directory dir,
@@ -65,7 +62,7 @@ func prefixAndSuffix(pattern string) (prefix, suffix string, err error) {
 			return "", "", errPatternHasSeparator
 		}
 	}
-	if pos := bytealg.LastIndexByteString(pattern, '*'); pos != -1 {
+	if pos := lastIndex(pattern, '*'); pos != -1 {
 		prefix, suffix = pattern[:pos], pattern[pos+1:]
 	} else {
 		prefix = pattern
@@ -118,4 +115,14 @@ func joinPath(dir, name string) string {
 		return dir + name
 	}
 	return dir + string(PathSeparator) + name
+}
+
+// lastIndex from the strings package.
+func lastIndex(s string, sep byte) int {
+	for i := len(s) - 1; i >= 0; i-- {
+		if s[i] == sep {
+			return i
+		}
+	}
+	return -1
 }

@@ -25,37 +25,6 @@ type rwmutex struct {
 
 	readerCount atomic.Int32 // number of pending readers
 	readerWait  atomic.Int32 // number of departing readers
-
-	readRank  lockRank // semantic lock rank for read locking
-	writeRank lockRank // semantic lock rank for write locking
-}
-
-// Lock ranking an rwmutex has two aspects:
-//
-// Semantic ranking: this rwmutex represents some higher level lock that
-// protects some resource (e.g., allocmLock protects creation of new Ms). The
-// read and write locks of that resource need to be represented in the lock
-// rank.
-//
-// Internal ranking: as an implementation detail, rwmutex uses two mutexes:
-// rLock and wLock. These have lock order requirements: wLock must be locked
-// before rLock. This also needs to be represented in the lock rank.
-//
-// Internal ranking is represented by assigning ranks rwmutexR and rwmutexW to
-// rLock and wLock, respectively.
-//
-// Semantic ranking is represented by acquiring readRank during read lock and
-// writeRank during write lock.
-//
-// readRank is always taken before rwmutexR and writeRank is always taken
-// before rwmutexW, so each unique rwmutex must record this order in the lock
-// ranking.
-func (rw *rwmutex) init(readRank, writeRank lockRank) {
-	rw.readRank = readRank
-	rw.writeRank = writeRank
-
-	lockInit(&rw.rLock, lockRankRwmutexR)
-	lockInit(&rw.wLock, lockRankRwmutexW)
 }
 
 const rwmutexMaxReaders = 1 << 30
@@ -67,14 +36,10 @@ func (rw *rwmutex) rlock() {
 	// deadlock (issue #20903). Alternatively, we could drop the P
 	// while sleeping.
 	acquirem()
-
-	acquireLockRank(rw.readRank)
-	lockWithRankMayAcquire(&rw.rLock, getLockRank(&rw.rLock))
-
 	if rw.readerCount.Add(1) < 0 {
 		// A writer is pending. Park on the reader queue.
 		systemstack(func() {
-			lock(&rw.rLock)
+			lockWithRank(&rw.rLock, lockRankRwmutexR)
 			if rw.readerPass > 0 {
 				// Writer finished.
 				rw.readerPass -= 1
@@ -102,7 +67,7 @@ func (rw *rwmutex) runlock() {
 		// A writer is pending.
 		if rw.readerWait.Add(-1) == 0 {
 			// The last reader unblocks the writer.
-			lock(&rw.rLock)
+			lockWithRank(&rw.rLock, lockRankRwmutexR)
 			w := rw.writer.ptr()
 			if w != nil {
 				notewakeup(&w.park)
@@ -110,20 +75,18 @@ func (rw *rwmutex) runlock() {
 			unlock(&rw.rLock)
 		}
 	}
-	releaseLockRank(rw.readRank)
 	releasem(getg().m)
 }
 
 // lock locks rw for writing.
 func (rw *rwmutex) lock() {
 	// Resolve competition with other writers and stick to our P.
-	acquireLockRank(rw.writeRank)
-	lock(&rw.wLock)
+	lockWithRank(&rw.wLock, lockRankRwmutexW)
 	m := getg().m
 	// Announce that there is a pending writer.
 	r := rw.readerCount.Add(-rwmutexMaxReaders) + rwmutexMaxReaders
 	// Wait for any active readers to complete.
-	lock(&rw.rLock)
+	lockWithRank(&rw.rLock, lockRankRwmutexR)
 	if r != 0 && rw.readerWait.Add(r) != 0 {
 		// Wait for reader to wake us up.
 		systemstack(func() {
@@ -145,7 +108,7 @@ func (rw *rwmutex) unlock() {
 		throw("unlock of unlocked rwmutex")
 	}
 	// Unblock blocked readers.
-	lock(&rw.rLock)
+	lockWithRank(&rw.rLock, lockRankRwmutexR)
 	for rw.readers.ptr() != nil {
 		reader := rw.readers.ptr()
 		rw.readers = reader.schedlink
@@ -159,5 +122,4 @@ func (rw *rwmutex) unlock() {
 	unlock(&rw.rLock)
 	// Allow other writers to proceed.
 	unlock(&rw.wLock)
-	releaseLockRank(rw.writeRank)
 }

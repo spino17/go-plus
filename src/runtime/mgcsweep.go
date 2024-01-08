@@ -25,7 +25,6 @@
 package runtime
 
 import (
-	"internal/goexperiment"
 	"runtime/internal/atomic"
 	"unsafe"
 )
@@ -37,6 +36,9 @@ type sweepdata struct {
 	lock   mutex
 	g      *g
 	parked bool
+
+	nbgsweep    uint32
+	npausesweep uint32
 
 	// active tracks outstanding sweepers and the sweep
 	// termination condition.
@@ -235,6 +237,7 @@ func finishsweep_m() {
 	// instantly. If GC was forced before the concurrent sweep
 	// finished, there may be spans to sweep.
 	for sweepone() != ^uintptr(0) {
+		sweep.npausesweep++
 	}
 
 	// Make sure there aren't any outstanding sweepers left.
@@ -296,6 +299,7 @@ func bgsweep(c chan int) {
 		const sweepBatchSize = 10
 		nSwept := 0
 		for sweepone() != ^uintptr(0) {
+			sweep.nbgsweep++
 			nSwept++
 			if nSwept%sweepBatchSize == 0 {
 				goschedIfBusy()
@@ -516,10 +520,8 @@ func (sl *sweepLocked) sweep(preserve bool) bool {
 		throw("mspan.sweep: bad span state")
 	}
 
-	trace := traceAcquire()
-	if trace.ok() {
-		trace.GCSweepSpan(s.npages * _PageSize)
-		traceRelease(trace)
+	if traceEnabled() {
+		traceGCSweepSpan(s.npages * _PageSize)
 	}
 
 	mheap_.pagesSwept.Add(int64(s.npages))
@@ -600,8 +602,8 @@ func (sl *sweepLocked) sweep(preserve bool) bool {
 		// efficient; allocfreetrace has massive overhead.
 		mbits := s.markBitsForBase()
 		abits := s.allocBitsForIndex(0)
-		for i := uintptr(0); i < uintptr(s.nelems); i++ {
-			if !mbits.isMarked() && (abits.index < uintptr(s.freeindex) || abits.isMarked()) {
+		for i := uintptr(0); i < s.nelems; i++ {
+			if !mbits.isMarked() && (abits.index < s.freeindex || abits.isMarked()) {
 				x := s.base() + i*s.elemsize
 				if debug.allocfreetrace != 0 {
 					tracefree(unsafe.Pointer(x), size)
@@ -632,12 +634,12 @@ func (sl *sweepLocked) sweep(preserve bool) bool {
 		//
 		// Check the first bitmap byte, where we have to be
 		// careful with freeindex.
-		obj := uintptr(s.freeindex)
+		obj := s.freeindex
 		if (*s.gcmarkBits.bytep(obj / 8)&^*s.allocBits.bytep(obj / 8))>>(obj%8) != 0 {
 			s.reportZombies()
 		}
 		// Check remaining bytes.
-		for i := obj/8 + 1; i < divRoundUp(uintptr(s.nelems), 8); i++ {
+		for i := obj/8 + 1; i < divRoundUp(s.nelems, 8); i++ {
 			if *s.gcmarkBits.bytep(i)&^*s.allocBits.bytep(i) != 0 {
 				s.reportZombies()
 			}
@@ -664,7 +666,7 @@ func (sl *sweepLocked) sweep(preserve bool) bool {
 	// gcmarkBits becomes the allocBits.
 	// get a fresh cleared gcmarkBits in preparation for next GC
 	s.allocBits = s.gcmarkBits
-	s.gcmarkBits = newMarkBits(uintptr(s.nelems))
+	s.gcmarkBits = newMarkBits(s.nelems)
 
 	// refresh pinnerBits if they exists
 	if s.pinnerBits != nil {
@@ -758,7 +760,7 @@ func (sl *sweepLocked) sweep(preserve bool) bool {
 				return true
 			}
 			// Return span back to the right mcentral list.
-			if nalloc == s.nelems {
+			if uintptr(nalloc) == s.nelems {
 				mheap_.central[spc].mcentral.fullSwept(sweepgen).push(s)
 			} else {
 				mheap_.central[spc].mcentral.partialSwept(sweepgen).push(s)
@@ -788,18 +790,6 @@ func (sl *sweepLocked) sweep(preserve bool) bool {
 				sysFault(unsafe.Pointer(s.base()), size)
 			} else {
 				mheap_.freeSpan(s)
-			}
-			if goexperiment.AllocHeaders && s.largeType != nil && s.largeType.Kind_&kindGCProg != 0 {
-				// In the allocheaders experiment, the unrolled GCProg bitmap is allocated separately.
-				// Free the space for the unrolled bitmap.
-				systemstack(func() {
-					s := spanOf(uintptr(unsafe.Pointer(s.largeType)))
-					mheap_.freeManual(s, spanAllocPtrScalarBits)
-				})
-				// Make sure to zero this pointer without putting the old
-				// value in a write buffer, as the old value might be an
-				// invalid pointer. See arena.go:(*mheap).allocUserArenaChunk.
-				*(*uintptr)(unsafe.Pointer(&s.largeType)) = 0
 			}
 
 			// Count the free in the consistent, external stats.
@@ -839,10 +829,10 @@ func (s *mspan) reportZombies() {
 	print("runtime: marked free object in span ", s, ", elemsize=", s.elemsize, " freeindex=", s.freeindex, " (bad use of unsafe.Pointer? try -d=checkptr)\n")
 	mbits := s.markBitsForBase()
 	abits := s.allocBitsForIndex(0)
-	for i := uintptr(0); i < uintptr(s.nelems); i++ {
+	for i := uintptr(0); i < s.nelems; i++ {
 		addr := s.base() + i*s.elemsize
 		print(hex(addr))
-		alloc := i < uintptr(s.freeindex) || abits.isMarked()
+		alloc := i < s.freeindex || abits.isMarked()
 		if alloc {
 			print(" alloc")
 		} else {
@@ -894,10 +884,8 @@ func deductSweepCredit(spanBytes uintptr, callerSweepPages uintptr) {
 		return
 	}
 
-	trace := traceAcquire()
-	if trace.ok() {
-		trace.GCSweepStart()
-		traceRelease(trace)
+	if traceEnabled() {
+		traceGCSweepStart()
 	}
 
 	// Fix debt if necessary.
@@ -936,10 +924,8 @@ retry:
 		}
 	}
 
-	trace = traceAcquire()
-	if trace.ok() {
-		trace.GCSweepDone()
-		traceRelease(trace)
+	if traceEnabled() {
+		traceGCSweepDone()
 	}
 }
 

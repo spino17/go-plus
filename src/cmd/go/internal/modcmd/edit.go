@@ -315,9 +315,6 @@ func parsePath(flag, arg string) (path string) {
 // parsePathVersionOptional parses path[@version], using adj to
 // describe any errors.
 func parsePathVersionOptional(adj, arg string, allowDirPath bool) (path, version string, err error) {
-	if allowDirPath && modfile.IsDirectoryPath(arg) {
-		return arg, "", nil
-	}
 	before, after, found := strings.Cut(arg, "@")
 	if !found {
 		path = arg
@@ -325,7 +322,9 @@ func parsePathVersionOptional(adj, arg string, allowDirPath bool) (path, version
 		path, version = strings.TrimSpace(before), strings.TrimSpace(after)
 	}
 	if err := module.CheckImportPath(path); err != nil {
-		return path, version, fmt.Errorf("invalid %s path: %v", adj, err)
+		if !allowDirPath || !modfile.IsDirectoryPath(path) {
+			return path, version, fmt.Errorf("invalid %s path: %v", adj, err)
+		}
 	}
 	if path != arg && !allowedVersionArg(version) {
 		return path, version, fmt.Errorf("invalid %s version: %q", adj, version)

@@ -169,7 +169,7 @@ func httpGoroutine(w http.ResponseWriter, r *http.Request) {
 var templGoroutine = template.Must(template.New("").Funcs(template.FuncMap{
 	"prettyDuration": func(nsec int64) template.HTML {
 		d := time.Duration(nsec) * time.Nanosecond
-		return template.HTML(d.String())
+		return template.HTML(niceDuration(d))
 	},
 	"percent": func(dividend, divisor int64) template.HTML {
 		if divisor == 0 {

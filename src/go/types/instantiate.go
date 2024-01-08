@@ -124,8 +124,7 @@ func (check *Checker) instance(pos token.Pos, orig Type, targs []Type, expanding
 		assert(expanding == nil) // function instances cannot be reached from Named types
 
 		tparams := orig.TypeParams()
-		// TODO(gri) investigate if this is needed (type argument and parameter count seem to be correct here)
-		if !check.validateTArgLen(pos, orig.String(), tparams.Len(), len(targs)) {
+		if !check.validateTArgLen(pos, tparams.Len(), len(targs)) {
 			return Typ[Invalid]
 		}
 		if tparams.Len() == 0 {
@@ -153,27 +152,19 @@ func (check *Checker) instance(pos token.Pos, orig Type, targs []Type, expanding
 	return updateContexts(res)
 }
 
-// validateTArgLen checks that the number of type arguments (got) matches the
-// number of type parameters (want); if they don't match an error is reported.
-// If validation fails and check is nil, validateTArgLen panics.
-func (check *Checker) validateTArgLen(pos token.Pos, name string, want, got int) bool {
-	var qual string
-	switch {
-	case got < want:
-		qual = "not enough"
-	case got > want:
-		qual = "too many"
-	default:
-		return true
+// validateTArgLen verifies that the length of targs and tparams matches,
+// reporting an error if not. If validation fails and check is nil,
+// validateTArgLen panics.
+func (check *Checker) validateTArgLen(pos token.Pos, ntparams, ntargs int) bool {
+	if ntargs != ntparams {
+		// TODO(gri) provide better error message
+		if check != nil {
+			check.errorf(atPos(pos), WrongTypeArgCount, "got %d arguments but %d type parameters", ntargs, ntparams)
+			return false
+		}
+		panic(fmt.Sprintf("%v: got %d arguments but %d type parameters", pos, ntargs, ntparams))
 	}
-
-	msg := check.sprintf("%s type arguments for type %s: have %d, want %d", qual, name, got, want)
-	if check != nil {
-		check.error(atPos(pos), WrongTypeArgCount, msg)
-		return false
-	}
-
-	panic(fmt.Sprintf("%v: %s", pos, msg))
+	return true
 }
 
 func (check *Checker) verify(pos token.Pos, tparams []*TypeParam, targs []Type, ctxt *Context) (int, error) {
@@ -203,10 +194,10 @@ func (check *Checker) verify(pos token.Pos, tparams []*TypeParam, targs []Type, 
 func (check *Checker) implements(pos token.Pos, V, T Type, constraint bool, cause *string) bool {
 	Vu := under(V)
 	Tu := under(T)
-	if !isValid(Vu) || !isValid(Tu) {
+	if Vu == Typ[Invalid] || Tu == Typ[Invalid] {
 		return true // avoid follow-on errors
 	}
-	if p, _ := Vu.(*Pointer); p != nil && !isValid(under(p.base)) {
+	if p, _ := Vu.(*Pointer); p != nil && under(p.base) == Typ[Invalid] {
 		return true // avoid follow-on errors (see go.dev/issue/49541 for an example)
 	}
 
