@@ -7,14 +7,11 @@
 package sanitizers_test
 
 import (
-	"internal/testenv"
 	"strings"
 	"testing"
 )
 
 func TestLibFuzzer(t *testing.T) {
-	testenv.MustHaveGoBuild(t)
-	testenv.MustHaveCGO(t)
 	goos, err := goEnv("GOOS")
 	if err != nil {
 		t.Fatal(err)

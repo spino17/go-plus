@@ -119,7 +119,7 @@ func (c *TCPConn) SyscallConn() (syscall.RawConn, error) {
 	if !c.ok() {
 		return nil, syscall.EINVAL
 	}
-	return newRawConn(c.fd), nil
+	return newRawConn(c.fd)
 }
 
 // ReadFrom implements the io.ReaderFrom ReadFrom method.
@@ -130,18 +130,6 @@ func (c *TCPConn) ReadFrom(r io.Reader) (int64, error) {
 	n, err := c.readFrom(r)
 	if err != nil && err != io.EOF {
 		err = &OpError{Op: "readfrom", Net: c.fd.net, Source: c.fd.laddr, Addr: c.fd.raddr, Err: err}
-	}
-	return n, err
-}
-
-// WriteTo implements the io.WriterTo WriteTo method.
-func (c *TCPConn) WriteTo(w io.Writer) (int64, error) {
-	if !c.ok() {
-		return 0, syscall.EINVAL
-	}
-	n, err := c.writeTo(w)
-	if err != nil && err != io.EOF {
-		err = &OpError{Op: "writeto", Net: c.fd.net, Source: c.fd.laddr, Addr: c.fd.raddr, Err: err}
 	}
 	return n, err
 }
@@ -302,7 +290,7 @@ func (l *TCPListener) SyscallConn() (syscall.RawConn, error) {
 	if !l.ok() {
 		return nil, syscall.EINVAL
 	}
-	return newRawListener(l.fd), nil
+	return newRawListener(l.fd)
 }
 
 // AcceptTCP accepts the next incoming call and returns the new
@@ -354,7 +342,10 @@ func (l *TCPListener) SetDeadline(t time.Time) error {
 	if !l.ok() {
 		return syscall.EINVAL
 	}
-	return l.fd.SetDeadline(t)
+	if err := l.fd.pfd.SetDeadline(t); err != nil {
+		return &OpError{Op: "set", Net: l.fd.net, Source: nil, Addr: l.fd.laddr, Err: err}
+	}
+	return nil
 }
 
 // File returns a copy of the underlying os.File.

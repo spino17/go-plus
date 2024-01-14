@@ -2,10 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Though the debug call function feature is not enabled on
-// ppc64, inserted ppc64 to avoid missing Go declaration error
-// for debugCallPanicked while building runtime.test
-//go:build amd64 || arm64 || ppc64le || ppc64
+//go:build amd64 || arm64
 
 package runtime
 
@@ -86,7 +83,7 @@ func debugCallCheck(pc uintptr) string {
 		if pc != f.entry() {
 			pc--
 		}
-		up := pcdatavalue(f, abi.PCDATA_UnsafePoint, pc)
+		up := pcdatavalue(f, abi.PCDATA_UnsafePoint, pc, nil)
 		if up != abi.UnsafePointSafe {
 			// Not at a safe point.
 			ret = debugCallUnsafePoint
@@ -166,12 +163,10 @@ func debugCallWrap(dispatch uintptr) {
 		gp.schedlink = 0
 
 		// Park the calling goroutine.
-		trace := traceAcquire()
-		casGToWaiting(gp, _Grunning, waitReasonDebugCall)
-		if trace.ok() {
-			trace.GoPark(traceBlockDebugCall, 1)
-			traceRelease(trace)
+		if traceEnabled() {
+			traceGoPark(traceBlockDebugCall, 1)
 		}
+		casGToWaiting(gp, _Grunning, waitReasonDebugCall)
 		dropg()
 
 		// Directly execute the new goroutine. The debug
@@ -227,23 +222,19 @@ func debugCallWrap1() {
 		// Switch back to the calling goroutine. At some point
 		// the scheduler will schedule us again and we'll
 		// finish exiting.
-		trace := traceAcquire()
-		casgstatus(gp, _Grunning, _Grunnable)
-		if trace.ok() {
-			trace.GoSched()
-			traceRelease(trace)
+		if traceEnabled() {
+			traceGoSched()
 		}
+		casgstatus(gp, _Grunning, _Grunnable)
 		dropg()
 		lock(&sched.lock)
 		globrunqput(gp)
 		unlock(&sched.lock)
 
-		trace = traceAcquire()
-		casgstatus(callingG, _Gwaiting, _Grunnable)
-		if trace.ok() {
-			trace.GoUnpark(callingG, 0)
-			traceRelease(trace)
+		if traceEnabled() {
+			traceGoUnpark(callingG, 0)
 		}
+		casgstatus(callingG, _Gwaiting, _Grunnable)
 		execute(callingG, true)
 	})
 }

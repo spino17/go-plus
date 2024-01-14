@@ -9,7 +9,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"internal/goexperiment"
 	"internal/profile"
 	"internal/race"
 	"internal/trace"
@@ -41,9 +40,6 @@ func TestEventBatch(t *testing.T) {
 	}
 	if testing.Short() {
 		t.Skip("skipping in short mode")
-	}
-	if goexperiment.ExecTracer2 {
-		t.Skip("skipping because this test is incompatible with the new tracer")
 	}
 	// During Start, bunch of records are written to reflect the current
 	// snapshot of the program, including state of each goroutines.
@@ -131,10 +127,6 @@ func TestTrace(t *testing.T) {
 	if IsEnabled() {
 		t.Skip("skipping because -test.trace is set")
 	}
-	if goexperiment.ExecTracer2 {
-		// An equivalent test exists in internal/trace/v2.
-		t.Skip("skipping because this test is incompatible with the new tracer")
-	}
 	buf := new(bytes.Buffer)
 	if err := Start(buf); err != nil {
 		t.Fatalf("failed to start tracing: %v", err)
@@ -201,10 +193,6 @@ func TestTraceStress(t *testing.T) {
 	}
 	if testing.Short() {
 		t.Skip("skipping in -short mode")
-	}
-	if goexperiment.ExecTracer2 {
-		// An equivalent test exists in internal/trace/v2.
-		t.Skip("skipping because this test is incompatible with the new tracer")
 	}
 
 	var wg sync.WaitGroup
@@ -368,10 +356,6 @@ func TestTraceStressStartStop(t *testing.T) {
 	if IsEnabled() {
 		t.Skip("skipping because -test.trace is set")
 	}
-	if goexperiment.ExecTracer2 {
-		// An equivalent test exists in internal/trace/v2.
-		t.Skip("skipping because this test is incompatible with the new tracer")
-	}
 	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(8))
 	outerDone := make(chan bool)
 
@@ -522,9 +506,6 @@ func TestTraceFutileWakeup(t *testing.T) {
 	if IsEnabled() {
 		t.Skip("skipping because -test.trace is set")
 	}
-	if goexperiment.ExecTracer2 {
-		t.Skip("skipping because this test is incompatible with the new tracer")
-	}
 	buf := new(bytes.Buffer)
 	if err := Start(buf); err != nil {
 		t.Fatalf("failed to start tracing: %v", err)
@@ -610,10 +591,6 @@ func TestTraceFutileWakeup(t *testing.T) {
 func TestTraceCPUProfile(t *testing.T) {
 	if IsEnabled() {
 		t.Skip("skipping because -test.trace is set")
-	}
-	if goexperiment.ExecTracer2 {
-		// An equivalent test exists in internal/trace/v2.
-		t.Skip("skipping because this test is incompatible with the new tracer")
 	}
 
 	cpuBuf := new(bytes.Buffer)

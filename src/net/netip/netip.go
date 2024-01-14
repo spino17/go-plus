@@ -12,7 +12,6 @@
 package netip
 
 import (
-	"cmp"
 	"errors"
 	"math"
 	"strconv"
@@ -662,6 +661,11 @@ func (ip Addr) Prefix(b int) (Prefix, error) {
 	return PrefixFrom(ip, b), nil
 }
 
+const (
+	netIPv4len = 4
+	netIPv6len = 16
+)
+
 // As16 returns the IP address in its 16-byte representation.
 // IPv4 addresses are returned as IPv4-mapped IPv6 addresses.
 // IPv6 addresses with zones are returned without their zone (use the
@@ -1039,7 +1043,7 @@ func (p AddrPort) Port() uint16 { return p.port }
 // ip string should parse as an IPv6 address or an IPv4 address, in
 // order for s to be a valid ip:port string.
 func splitAddrPort(s string) (ip, port string, v6 bool, err error) {
-	i := bytealg.LastIndexByteString(s, ':')
+	i := stringsLastIndexByte(s, ':')
 	if i == -1 {
 		return "", "", false, errors.New("not an ip:port")
 	}
@@ -1103,31 +1107,32 @@ func MustParseAddrPort(s string) AddrPort {
 // All ports are valid, including zero.
 func (p AddrPort) IsValid() bool { return p.ip.IsValid() }
 
-// Compare returns an integer comparing two AddrPorts.
-// The result will be 0 if p == p2, -1 if p < p2, and +1 if p > p2.
-// AddrPorts sort first by IP address, then port.
-func (p AddrPort) Compare(p2 AddrPort) int {
-	if c := p.Addr().Compare(p2.Addr()); c != 0 {
-		return c
-	}
-	return cmp.Compare(p.Port(), p2.Port())
-}
-
 func (p AddrPort) String() string {
 	switch p.ip.z {
 	case z0:
 		return "invalid AddrPort"
 	case z4:
-		const max = len("255.255.255.255:65535")
-		buf := make([]byte, 0, max)
-		buf = p.ip.appendTo4(buf)
-		buf = append(buf, ':')
+		a := p.ip.As4()
+		buf := make([]byte, 0, 21)
+		for i := range a {
+			buf = strconv.AppendUint(buf, uint64(a[i]), 10)
+			buf = append(buf, "...:"[i])
+		}
 		buf = strconv.AppendUint(buf, uint64(p.port), 10)
 		return string(buf)
 	default:
 		// TODO: this could be more efficient allocation-wise:
-		return "[" + p.ip.String() + "]:" + itoa.Uitoa(uint(p.port))
+		return joinHostPort(p.ip.String(), itoa.Itoa(int(p.port)))
 	}
+}
+
+func joinHostPort(host, port string) string {
+	// We assume that host is a literal IPv6 address if host has
+	// colons.
+	if bytealg.IndexByteString(host, ':') >= 0 {
+		return "[" + host + "]:" + port
+	}
+	return host + ":" + port
 }
 
 // AppendTo appends a text encoding of p,
@@ -1261,24 +1266,6 @@ func (p Prefix) isZero() bool { return p == Prefix{} }
 // IsSingleIP reports whether p contains exactly one IP.
 func (p Prefix) IsSingleIP() bool { return p.IsValid() && p.Bits() == p.ip.BitLen() }
 
-// compare returns an integer comparing two prefixes.
-// The result will be 0 if p == p2, -1 if p < p2, and +1 if p > p2.
-// Prefixes sort first by validity (invalid before valid), then
-// address family (IPv4 before IPv6), then prefix length, then
-// address.
-//
-// Unexported for Go 1.22 because we may want to compare by p.Addr first.
-// See post-acceptance discussion on go.dev/issue/61642.
-func (p Prefix) compare(p2 Prefix) int {
-	if c := cmp.Compare(p.Addr().BitLen(), p2.Addr().BitLen()); c != 0 {
-		return c
-	}
-	if c := cmp.Compare(p.Bits(), p2.Bits()); c != 0 {
-		return c
-	}
-	return p.Addr().Compare(p2.Addr())
-}
-
 // ParsePrefix parses s as an IP address prefix.
 // The string can be in the form "192.168.1.0/24" or "2001:db8::/32",
 // the CIDR notation defined in RFC 4632 and RFC 4291.
@@ -1287,7 +1274,7 @@ func (p Prefix) compare(p2 Prefix) int {
 //
 // Note that masked address bits are not zeroed. Use Masked for that.
 func ParsePrefix(s string) (Prefix, error) {
-	i := bytealg.LastIndexByteString(s, '/')
+	i := stringsLastIndexByte(s, '/')
 	if i < 0 {
 		return Prefix{}, errors.New("netip.ParsePrefix(" + strconv.Quote(s) + "): no '/'")
 	}
@@ -1301,12 +1288,6 @@ func ParsePrefix(s string) (Prefix, error) {
 	}
 
 	bitsStr := s[i+1:]
-
-	// strconv.Atoi accepts a leading sign and leading zeroes, but we don't want that.
-	if len(bitsStr) > 1 && (bitsStr[0] < '1' || bitsStr[0] > '9') {
-		return Prefix{}, errors.New("netip.ParsePrefix(" + strconv.Quote(s) + "): bad bits after slash: " + strconv.Quote(bitsStr))
-	}
-
 	bits, err := strconv.Atoi(bitsStr)
 	if err != nil {
 		return Prefix{}, errors.New("netip.ParsePrefix(" + strconv.Quote(s) + "): bad bits after slash: " + strconv.Quote(bitsStr))

@@ -102,7 +102,6 @@ package runtime
 
 import (
 	"internal/goarch"
-	"internal/goexperiment"
 	"internal/goos"
 	"runtime/internal/atomic"
 	"runtime/internal/math"
@@ -117,6 +116,8 @@ const (
 
 	pageShift = _PageShift
 	pageSize  = _PageSize
+
+	concurrentSweep = _ConcurrentSweep
 
 	_PageSize = 1 << _PageShift
 	_PageMask = _PageSize - 1
@@ -424,26 +425,6 @@ func mallocinit() {
 	if pagesPerArena%pagesPerReclaimerChunk != 0 {
 		print("pagesPerArena (", pagesPerArena, ") is not divisible by pagesPerReclaimerChunk (", pagesPerReclaimerChunk, ")\n")
 		throw("bad pagesPerReclaimerChunk")
-	}
-	if goexperiment.AllocHeaders {
-		// Check that the minimum size (exclusive) for a malloc header is also
-		// a size class boundary. This is important to making sure checks align
-		// across different parts of the runtime.
-		minSizeForMallocHeaderIsSizeClass := false
-		for i := 0; i < len(class_to_size); i++ {
-			if minSizeForMallocHeader == uintptr(class_to_size[i]) {
-				minSizeForMallocHeaderIsSizeClass = true
-				break
-			}
-		}
-		if !minSizeForMallocHeaderIsSizeClass {
-			throw("min size of malloc header is not a size class boundary")
-		}
-		// Check that the pointer bitmap for all small sizes without a malloc header
-		// fits in a word.
-		if minSizeForMallocHeader/goarch.PtrSize > 8*goarch.PtrSize {
-			throw("max pointer/scan bitmap size for headerless objects is too large")
-		}
 	}
 
 	if minTagBits > taggedPointerBits {
@@ -911,7 +892,7 @@ var zerobase uintptr
 func nextFreeFast(s *mspan) gclinkptr {
 	theBit := sys.TrailingZeros64(s.allocCache) // Is there a free object in the allocCache?
 	if theBit < 64 {
-		result := s.freeindex + uint16(theBit)
+		result := s.freeindex + uintptr(theBit)
 		if result < s.nelems {
 			freeidx := result + 1
 			if freeidx%64 == 0 && freeidx != s.nelems {
@@ -920,7 +901,7 @@ func nextFreeFast(s *mspan) gclinkptr {
 			s.allocCache >>= uint(theBit + 1)
 			s.freeindex = freeidx
 			s.allocCount++
-			return gclinkptr(uintptr(result)*s.elemsize + s.base())
+			return gclinkptr(result*s.elemsize + s.base())
 		}
 	}
 	return 0
@@ -941,7 +922,7 @@ func (c *mcache) nextFree(spc spanClass) (v gclinkptr, s *mspan, shouldhelpgc bo
 	freeIndex := s.nextFreeIndex()
 	if freeIndex == s.nelems {
 		// The span is full.
-		if s.allocCount != s.nelems {
+		if uintptr(s.allocCount) != s.nelems {
 			println("runtime: s.allocCount=", s.allocCount, "s.nelems=", s.nelems)
 			throw("s.allocCount != s.nelems && freeIndex == s.nelems")
 		}
@@ -956,9 +937,9 @@ func (c *mcache) nextFree(spc spanClass) (v gclinkptr, s *mspan, shouldhelpgc bo
 		throw("freeIndex is not valid")
 	}
 
-	v = gclinkptr(uintptr(freeIndex)*s.elemsize + s.base())
+	v = gclinkptr(freeIndex*s.elemsize + s.base())
 	s.allocCount++
-	if s.allocCount > s.nelems {
+	if uintptr(s.allocCount) > s.nelems {
 		println("s.allocCount=", s.allocCount, "s.nelems=", s.nelems)
 		throw("s.allocCount > s.nelems")
 	}
@@ -1041,22 +1022,12 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 		throw("mallocgc called without a P or outside bootstrapping")
 	}
 	var span *mspan
-	var header **_type
 	var x unsafe.Pointer
 	noscan := typ == nil || typ.PtrBytes == 0
 	// In some cases block zeroing can profitably (for latency reduction purposes)
 	// be delayed till preemption is possible; delayedZeroing tracks that state.
 	delayedZeroing := false
-	// Determine if it's a 'small' object that goes into a size-classed span.
-	//
-	// Note: This comparison looks a little strange, but it exists to smooth out
-	// the crossover between the largest size class and large objects that have
-	// their own spans. The small window of object sizes between maxSmallSize-mallocHeaderSize
-	// and maxSmallSize will be considered large, even though they might fit in
-	// a size class. In practice this is completely fine, since the largest small
-	// size class has a single object in it already, precisely to make the transition
-	// to large objects smooth.
-	if size <= maxSmallSize-mallocHeaderSize {
+	if size <= maxSmallSize {
 		if noscan && size < maxTinySize {
 			// Tiny allocator.
 			//
@@ -1131,10 +1102,6 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 			}
 			size = maxTinySize
 		} else {
-			hasHeader := !noscan && !heapBitsInSpan(size)
-			if goexperiment.AllocHeaders && hasHeader {
-				size += mallocHeaderSize
-			}
 			var sizeclass uint8
 			if size <= smallSizeMax-8 {
 				sizeclass = size_to_class8[divRoundUp(size, smallSizeDiv)]
@@ -1152,11 +1119,6 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 			if needzero && span.needzero != 0 {
 				memclrNoHeapPointers(x, size)
 			}
-			if goexperiment.AllocHeaders && hasHeader {
-				header = (**_type)(x)
-				x = add(x, mallocHeaderSize)
-				size -= mallocHeaderSize
-			}
 		}
 	} else {
 		shouldhelpgc = true
@@ -1172,30 +1134,29 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 				delayedZeroing = true
 			} else {
 				memclrNoHeapPointers(x, size)
+				// We've in theory cleared almost the whole span here,
+				// and could take the extra step of actually clearing
+				// the whole thing. However, don't. Any GC bits for the
+				// uncleared parts will be zero, and it's just going to
+				// be needzero = 1 once freed anyway.
 			}
-		}
-		if goexperiment.AllocHeaders && !noscan {
-			header = &span.largeType
 		}
 	}
+
 	if !noscan {
-		if goexperiment.AllocHeaders {
-			c.scanAlloc += heapSetType(uintptr(x), dataSize, typ, header, span)
-		} else {
-			var scanSize uintptr
-			heapBitsSetType(uintptr(x), size, dataSize, typ)
-			if dataSize > typ.Size_ {
-				// Array allocation. If there are any
-				// pointers, GC has to scan to the last
-				// element.
-				if typ.PtrBytes != 0 {
-					scanSize = dataSize - typ.Size_ + typ.PtrBytes
-				}
-			} else {
-				scanSize = typ.PtrBytes
+		var scanSize uintptr
+		heapBitsSetType(uintptr(x), size, dataSize, typ)
+		if dataSize > typ.Size_ {
+			// Array allocation. If there are any
+			// pointers, GC has to scan to the last
+			// element.
+			if typ.PtrBytes != 0 {
+				scanSize = dataSize - typ.Size_ + typ.PtrBytes
 			}
-			c.scanAlloc += scanSize
+		} else {
+			scanSize = typ.PtrBytes
 		}
+		c.scanAlloc += scanSize
 	}
 
 	// Ensure that the stores above that initialize x to
@@ -1221,7 +1182,7 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 	// This may be racing with GC so do it atomically if there can be
 	// a race marking the bit.
 	if gcphase != _GCoff {
-		gcmarknewobject(span, uintptr(x))
+		gcmarknewobject(span, uintptr(x), size)
 	}
 
 	if raceenabled {
@@ -1243,28 +1204,12 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 		asanunpoison(x, userSize)
 	}
 
-	// If !goexperiment.AllocHeaders, "size" doesn't include the
-	// allocation header, so use span.elemsize as the "full" size
-	// for various computations below.
-	//
-	// TODO(mknyszek): We should really count the header as part
-	// of gc_sys or something, but it's risky to change the
-	// accounting so much right now. Just pretend its internal
-	// fragmentation and match the GC's accounting by using the
-	// whole allocation slot.
-	fullSize := size
-	if goexperiment.AllocHeaders {
-		fullSize = span.elemsize
-	}
 	if rate := MemProfileRate; rate > 0 {
 		// Note cache c only valid while m acquired; see #47302
-		//
-		// N.B. Use the full size because that matches how the GC
-		// will update the mem profile on the "free" side.
-		if rate != 1 && fullSize < c.nextSample {
-			c.nextSample -= fullSize
+		if rate != 1 && size < c.nextSample {
+			c.nextSample -= size
 		} else {
-			profilealloc(mp, x, fullSize)
+			profilealloc(mp, x, size)
 		}
 	}
 	mp.mallocing = 0
@@ -1276,10 +1221,6 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 		if !noscan {
 			throw("delayed zeroing on data that may contain pointers")
 		}
-		if goexperiment.AllocHeaders && header != nil {
-			throw("unexpected malloc header in delayed zeroing of large object")
-		}
-		// N.B. size == fullSize always in this case.
 		memclrNoHeapPointersChunked(size, x) // This is a possible preemption point: see #47302
 	}
 
@@ -1290,17 +1231,14 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 
 		if inittrace.active && inittrace.id == getg().goid {
 			// Init functions are executed sequentially in a single goroutine.
-			inittrace.bytes += uint64(fullSize)
+			inittrace.bytes += uint64(size)
 		}
 	}
 
 	if assistG != nil {
 		// Account for internal fragmentation in the assist
 		// debt now that we know it.
-		//
-		// N.B. Use the full size because that's how the rest
-		// of the GC accounts for bytes marked.
-		assistG.gcAssistBytes -= int64(fullSize - dataSize)
+		assistG.gcAssistBytes -= int64(size - dataSize)
 	}
 
 	if shouldhelpgc {
@@ -1472,7 +1410,7 @@ func fastexprand(mean int) int32 {
 	// x = -log_e(q) * mean
 	// x = log_2(q) * (-log_e(2)) * mean    ; Using log_2 for efficiency
 	const randomBitCount = 26
-	q := cheaprandn(1<<randomBitCount) + 1
+	q := fastrandn(1<<randomBitCount) + 1
 	qlog := fastlog2(float64(q)) - randomBitCount
 	if qlog > 0 {
 		qlog = 0
@@ -1490,7 +1428,7 @@ func nextSampleNoFP() uintptr {
 		rate = 0x3fffffff
 	}
 	if rate != 0 {
-		return uintptr(cheaprandn(uint32(2 * rate)))
+		return uintptr(fastrandn(uint32(2 * rate)))
 	}
 	return 0
 }

@@ -48,7 +48,9 @@ func (p *Process) wait() (ps *ProcessState, err error) {
 	if e != nil {
 		return nil, NewSyscallError("wait", e)
 	}
-	p.setDone()
+	if pid1 != 0 {
+		p.setDone()
+	}
 	ps = &ProcessState{
 		pid:    pid1,
 		status: status,

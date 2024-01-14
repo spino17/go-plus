@@ -25,6 +25,7 @@ func min[T IntLike](x, y T) T {
 		return x
 	}
 	return y
+
 }
 
 // Min returns the minimum element of `nums`.

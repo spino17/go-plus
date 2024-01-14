@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http/internal/ascii"
 	"strconv"
 	"strings"
 	"syscall/js"
@@ -185,22 +184,11 @@ func (t *Transport) RoundTrip(req *Request) (*Response, error) {
 		}
 
 		code := result.Get("status").Int()
-
-		uncompressed := false
-		if ascii.EqualFold(header.Get("Content-Encoding"), "gzip") {
-			// The fetch api will decode the gzip, but Content-Encoding not be deleted.
-			header.Del("Content-Encoding")
-			header.Del("Content-Length")
-			contentLength = -1
-			uncompressed = true
-		}
-
 		respCh <- &Response{
 			Status:        fmt.Sprintf("%d %s", code, StatusText(code)),
 			StatusCode:    code,
 			Header:        header,
 			ContentLength: contentLength,
-			Uncompressed:  uncompressed,
 			Body:          body,
 			Request:       req,
 		}

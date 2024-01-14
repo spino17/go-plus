@@ -44,7 +44,6 @@ const (
 	FuncID_asmcgocall
 	FuncID_asyncPreempt
 	FuncID_cgocallback
-	FuncID_corostart
 	FuncID_debugCallV2
 	FuncID_gcBgMarkWorker
 	FuncID_goexit

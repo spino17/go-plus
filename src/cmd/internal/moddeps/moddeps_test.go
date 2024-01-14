@@ -443,14 +443,7 @@ func findGorootModules(t *testing.T) []gorootModule {
 	goBin := testenv.GoToolPath(t)
 
 	goroot.once.Do(func() {
-		// If the root itself is a symlink to a directory,
-		// we want to follow it (see https://go.dev/issue/64375).
-		// Add a trailing separator to force that to happen.
-		root := testenv.GOROOT(t)
-		if !os.IsPathSeparator(root[len(root)-1]) {
-			root += string(filepath.Separator)
-		}
-		goroot.err = filepath.WalkDir(root, func(path string, info fs.DirEntry, err error) error {
+		goroot.err = filepath.WalkDir(testenv.GOROOT(t), func(path string, info fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}

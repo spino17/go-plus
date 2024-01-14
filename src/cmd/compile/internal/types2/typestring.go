@@ -218,7 +218,7 @@ func (w *typeWriter) typ(typ Type) {
 				w.string("any")
 				break
 			}
-			if t == asNamed(universeComparable.Type()).underlying {
+			if t == universeComparable.Type().(*Named).underlying {
 				w.string("interface{comparable}")
 				break
 			}
@@ -322,15 +322,8 @@ func (w *typeWriter) typ(typ Type) {
 			// error messages. This doesn't need to be super-elegant; we just
 			// need a clear indication that this is not a predeclared name.
 			if w.ctxt == nil && Universe.Lookup(t.obj.name) != nil {
-				w.string(fmt.Sprintf(" /* with %s declared at %s */", t.obj.name, t.obj.Pos()))
+				w.string(sprintf(nil, false, " /* with %s declared at %s */", t.obj.name, t.obj.Pos()))
 			}
-		}
-
-	case *Alias:
-		w.typeName(t.obj)
-		if w.ctxt != nil {
-			// TODO(gri) do we need to print the alias type name, too?
-			w.typ(Unalias(t.obj.typ))
 		}
 
 	default:

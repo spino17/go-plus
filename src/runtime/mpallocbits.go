@@ -134,7 +134,7 @@ type pallocBits pageBits
 
 // summarize returns a packed summary of the bitmap in pallocBits.
 func (b *pallocBits) summarize() pallocSum {
-	var start, most, cur uint
+	var start, max, cur uint
 	const notSetYet = ^uint(0) // sentinel for start value
 	start = notSetYet
 	for i := 0; i < len(b); i++ {
@@ -151,7 +151,9 @@ func (b *pallocBits) summarize() pallocSum {
 		if start == notSetYet {
 			start = cur
 		}
-		most = max(most, cur)
+		if cur > max {
+			max = cur
+		}
 		// Final region that might span to next uint64
 		cur = l
 	}
@@ -160,11 +162,12 @@ func (b *pallocBits) summarize() pallocSum {
 		const n = uint(64 * len(b))
 		return packPallocSum(n, n, n)
 	}
-	most = max(most, cur)
-
-	if most >= 64-2 {
+	if cur > max {
+		max = cur
+	}
+	if max >= 64-2 {
 		// There is no way an internal run of zeros could beat max.
-		return packPallocSum(start, most, cur)
+		return packPallocSum(start, max, cur)
 	}
 	// Now look inside each uint64 for runs of zeros.
 	// All uint64s must be nonzero, or we would have aborted above.
@@ -185,7 +188,7 @@ outer:
 
 		// Strategy: shrink all runs of zeros by max. If any runs of zero
 		// remain, then we've identified a larger maximum zero run.
-		p := most    // number of zeros we still need to shrink by.
+		p := max     // number of zeros we still need to shrink by.
 		k := uint(1) // current minimum length of runs of ones in x.
 		for {
 			// Shrink all runs of zeros by p places (except the top zeros).
@@ -214,14 +217,14 @@ outer:
 			x >>= j & 63                       // remove trailing ones
 			j = uint(sys.TrailingZeros64(x))   // count contiguous trailing zeros
 			x >>= j & 63                       // remove zeros
-			most += j                          // we have a new maximum!
+			max += j                           // we have a new maximum!
 			if x&(x+1) == 0 {                  // no more zeros (except at the top).
 				continue outer
 			}
 			p = j // remove j more zeros from each zero run.
 		}
 	}
-	return packPallocSum(start, most, cur)
+	return packPallocSum(start, max, cur)
 }
 
 // find searches for npages contiguous free pages in pallocBits and returns

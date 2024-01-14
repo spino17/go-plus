@@ -49,6 +49,11 @@ func unlock() {
 }
 
 //go:nosplit
+func unlockNoFence() {
+	lock.state = 0
+}
+
+//go:nosplit
 func Xadd64(addr *uint64, delta int64) (new uint64) {
 	lockAndCheck(addr)
 
@@ -80,7 +85,7 @@ func Cas64(addr *uint64, old, new uint64) (swapped bool) {
 		return true
 	}
 
-	unlock()
+	unlockNoFence()
 	return false
 }
 

@@ -749,12 +749,12 @@ func TestProcCopy(t *testing.T) {
 	}
 }
 
-func TestGetPollFDAndNetwork(t *testing.T) {
-	t.Run("tcp4", func(t *testing.T) { testGetPollFDAndNetwork(t, "tcp4") })
-	t.Run("unix", func(t *testing.T) { testGetPollFDAndNetwork(t, "unix") })
+func TestGetPollFDFromReader(t *testing.T) {
+	t.Run("tcp", func(t *testing.T) { testGetPollFromReader(t, "tcp") })
+	t.Run("unix", func(t *testing.T) { testGetPollFromReader(t, "unix") })
 }
 
-func testGetPollFDAndNetwork(t *testing.T, proto string) {
+func testGetPollFromReader(t *testing.T, proto string) {
 	_, server := createSocketPair(t, proto)
 	sc, ok := server.(syscall.Conn)
 	if !ok {
@@ -765,15 +765,12 @@ func testGetPollFDAndNetwork(t *testing.T, proto string) {
 		t.Fatalf("server SyscallConn error: %v", err)
 	}
 	if err = rc.Control(func(fd uintptr) {
-		pfd, network := GetPollFDAndNetwork(server)
+		pfd := GetPollFDForTest(server)
 		if pfd == nil {
-			t.Fatalf("GetPollFDAndNetwork didn't return poll.FD")
-		}
-		if string(network) != proto {
-			t.Fatalf("GetPollFDAndNetwork returned wrong network, got: %s, want: %s", network, proto)
+			t.Fatalf("GetPollFDForTest didn't return poll.FD")
 		}
 		if pfd.Sysfd != int(fd) {
-			t.Fatalf("GetPollFDAndNetwork returned wrong poll.FD, got: %d, want: %d", pfd.Sysfd, int(fd))
+			t.Fatalf("GetPollFDForTest returned wrong poll.FD, got: %d, want: %d", pfd.Sysfd, int(fd))
 		}
 		if !pfd.IsStream {
 			t.Fatalf("expected IsStream to be true")
